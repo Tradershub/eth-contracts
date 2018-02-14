@@ -3,3 +3,6 @@ build
 notes
 _dev
 .idea
+vault
+*.log
+.vagrant

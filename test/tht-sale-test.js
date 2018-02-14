@@ -3,6 +3,7 @@ import ether from '../node_modules/zeppelin-solidity/test/helpers/ether';
 import { advanceBlock } from '../node_modules/zeppelin-solidity/test/helpers/advanceToBlock';
 import { increaseTimeTo, duration, default as increaseTime } from '../node_modules/zeppelin-solidity/test/helpers/increaseTime';
 import latestTime from '../node_modules/zeppelin-solidity/test/helpers/latestTime';
+import config from '../config-test';
 
 // web3 provided by truffle
 const BigNumber = web3.BigNumber;
@@ -13,18 +14,22 @@ require('chai')
 
 let THToken = artifacts.require("./THToken.sol");
 let TokenSale = artifacts.require("./THTokenSale.sol");
+let MultiSigWallet = artifacts.require("./MultiSigWallet.sol");
 
 contract('TokenSale', (accounts) => {
     let owner, wallet, client, client2, walletCoreTeam, token, tokensale, startTime, endTime, afterEndTime;
     let testRate, minEthInvestment, maxEthInvestment, softCap, hardCap;
     let Token = THToken;
     let stages;
+    let multisigWallet;
 
     before(async () => {
         // Advance to the next block to correctly read time in the solidity "now" function interpreted by testrpc
         await advanceBlock();
         owner = web3.eth.accounts[0];
-        wallet = web3.eth.accounts[1];
+        // wallet = web3.eth.accounts[1];
+        wallet = (await MultiSigWallet.new(config.MULTISIG_WALLET_TEAM_OWNERS, config.MULTISIG_WALLET_TEAM_REQ_SIG)).address;
+        console.log("Multisig: " + wallet);
         client = web3.eth.accounts[2];
         client2 = web3.eth.accounts[3];
         walletCoreTeam = web3.eth.accounts[4];
@@ -42,10 +47,12 @@ contract('TokenSale', (accounts) => {
         }
     };
 
-    beforeEach(async function () {
+    beforeEach(async () => {
         startTime = latestTime() + duration.weeks(1);
+        // startTime = config.CROWDSALE_START_TIME;
         endTime = startTime + duration.days(32);    // TODO: Sale duration
         afterEndTime = endTime + duration.weeks(1);
+        // wallet = (await MultiSigWallet.new(config.MULTISIG_WALLET_TEAM_OWNERS, config.MULTISIG_WALLET_TEAM_REQ_SIG)).address;
         tokensale = await TokenSale.new(startTime, wallet, walletCoreTeam);
         token = await Token.at(await tokensale.token());
 
@@ -57,10 +64,10 @@ contract('TokenSale', (accounts) => {
             });
         }
         testRate = 5040;
-        softCap = await tokensale.softCap();
-        hardCap = await tokensale.hardCap();
-        minEthInvestment = await tokensale.minInvestment();
-        maxEthInvestment = await tokensale.maxInvestment();
+        softCap = await tokensale.SOFT_CAP();
+        hardCap = await tokensale.HARD_CAP();
+        minEthInvestment = await tokensale.MIN_INVESTMENT();
+        maxEthInvestment = await tokensale.MAX_INVESTMENT();
     });
 
     describe('#stage system tests', async ()=> {
@@ -135,7 +142,7 @@ contract('TokenSale', (accounts) => {
             });
         });
 
-        it("should forbid transfer and transferFrom if softCap not reached and finishCrowdsale called", async() => {
+        it("should forbid transfer and transferFrom if soft cap not reached and finishCrowdsale called", async() => {
             let lessThanGoal = ether(10);
             await increaseTimeTo(startTime);
 
@@ -150,11 +157,11 @@ contract('TokenSale', (accounts) => {
             await tokensale.finishCrowdsale({ from: owner });
             await increaseTime(duration.weeks(1));
 
-            await assertRevert(token.transferFrom(client, owner, 10))
-            await assertRevert(token.transfer(client, 10))
+            await assertRevert(token.transferFrom(client, owner, 10));
+            await assertRevert(token.transfer(client, 10));
         });
 
-        it("should ALLOW transfer and transferFrom if softCap reached and finishCrowdsale called", async() => {
+        it("should ALLOW transfer and transferFrom if soft cap reached and finishCrowdsale called", async() => {
             await increaseTimeTo(startTime);
 
             await tokensale.addWhitelist(client, softCap, {from: owner});
@@ -249,7 +256,7 @@ contract('TokenSale', (accounts) => {
         });
 
         it("should forbid token transfer via transferFrom", async() => {
-            await increaseTime(startTime);
+            await increaseTimeTo(startTime);
             await assertRevert(token.transferFrom(client, owner, 10))
         });
 
@@ -588,7 +595,7 @@ contract('TokenSale', (accounts) => {
             await assertRevert(tokensale.buyTokens(client, { from: client, value: ether(10) }));
         });
 
-        it("should refund eth to backers if softCap not reached after sale", async() => {
+        it("should refund eth to backers if soft cap not reached after sale", async() => {
             let lessThanGoal = ether(10);
             await increaseTimeTo(startTime);
 
@@ -609,7 +616,7 @@ contract('TokenSale', (accounts) => {
             post.minus(pre).should.be.bignumber.equal(lessThanGoal);
         });
 
-        it("should NOT refund eth to backers if softCap reached after sale", async() => {
+        it("should NOT refund eth to backers if soft cap reached after sale", async() => {
             await increaseTimeTo(startTime);
             let reachSoftCap = softCap;
 
@@ -643,7 +650,7 @@ contract('TokenSale', (accounts) => {
 
             await tokensale.finishCrowdsale({ from: owner });
 
-            let crowdsalePart = await tokensale.crowdsaleAllocation(); // Platform 60%
+            let crowdsalePart = await tokensale.CROWDSALE_ALLOCATION(); // Platform 60%
             let bountyPart = await tokensale.varTokenAllocation(0); // Bounty 5%
             let platformPart = await tokensale.varTokenAllocation(2); // Platform 10%
 
@@ -668,7 +675,7 @@ contract('TokenSale', (accounts) => {
 
             await tokensale.finishCrowdsale({ from: owner });
 
-            let crowdsalePart = await tokensale.crowdsaleAllocation(); // Platform 60%
+            let crowdsalePart = await tokensale.CROWDSALE_ALLOCATION(); // Platform 60%
             let advisorPart = await tokensale.varTokenAllocation(1); // Advisor 5%
             let teamPart = new BigNumber(0);
             let vestedTeamTotal = new BigNumber(0);
@@ -806,7 +813,6 @@ contract('TokenSale', (accounts) => {
 
             await tokensale.withdrawAdvisorTokens({ from: owner });
             (await token.balanceOf(wallet)).should.be.bignumber.equal(walletPreWithdraw);
-
             await increaseTimeTo(startTime + duration.days(181));
 
             let vestedAdvisorAlloc = await tokensale.vestedAdvisors();
@@ -816,6 +822,9 @@ contract('TokenSale', (accounts) => {
             // Can't withdraw more
             await tokensale.withdrawAdvisorTokens({ from: owner });
             (await token.balanceOf(wallet)).should.be.bignumber.equal(walletPreWithdraw.plus(vestedAdvisorAlloc));
+
+            console.log("Platform Multisig should have " + walletPreWithdraw.plus(vestedAdvisorAlloc)
+                + " THT for Token contract: " + token.address);
         });
     });
 

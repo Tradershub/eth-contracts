@@ -1,8 +1,9 @@
 pragma solidity ^0.4.18;
 
-import './zeppelin-solidity/math/SafeMath.sol';
-import './zeppelin-solidity/lifecycle/Pausable.sol';
-import './THToken.sol';
+import "./zeppelin-solidity/math/SafeMath.sol";
+import "./zeppelin-solidity/lifecycle/Pausable.sol";
+import "./THToken.sol";
+
 
 // Also Ownable due to Pausable
 contract THTokenSale is Pausable {
@@ -15,10 +16,10 @@ contract THTokenSale is Pausable {
     uint256 public fundsRaised = 0;
 
     // Minimal possible cap in ethers
-    uint256 public constant softCap = 3000 ether;
+    uint256 public constant SOFT_CAP = 3000 ether;
 
     // Maximum possible cap in ethers
-    uint256 public constant hardCap = 12000 ether;
+    uint256 public constant HARD_CAP = 12000 ether;
 
     /**
      * Stage 1: 3000 ether worth of THT available at 40% bonus
@@ -27,26 +28,52 @@ contract THTokenSale is Pausable {
      * Stage 4: 2250 ether worth of THT available at 5% bonus
      * Stage 5: 2700 ether worth of THT available with no bonus
      */
-    uint256[5] public stageCaps = [3000 ether, 4800 ether, 7050 ether, 9300 ether, 12000 ether];
-    uint256[5] public stageTokenMul = [5040, 4320, 3960, 3780, 3600];
+    uint256[5] public stageCaps = [
+        3000 ether,
+        4800 ether,
+        7050 ether,
+        9300 ether,
+        12000 ether
+    ];
+    uint256[5] public stageTokenMul = [
+        5040,
+        4320,
+        3960,
+        3780,
+        3600
+    ];
     uint256 public activeStage = 0;
 
     // Minimum and maximum investments in Ether
     // uint256 public constant minInvestmentPeriod1 = 5 ether; // TODO - decide if implementing
-    uint256 public constant minInvestment = 0.1 ether; //
-    uint256 public constant maxInvestment = 3000 ether; // TODO - set value at time of deployment
+    uint256 public constant MIN_INVESTMENT = 0.1 ether; //
+    uint256 public constant MAX_INVESTMENT = 3000 ether; // TODO - set value at time of deployment
 
-    // refundAllowed can be set to true if softCap is not reached
+    // refundAllowed can be set to true if SOFT_CAP is not reached
     bool public refundAllowed = false;
-    // Token Allocation for Advisors (5%), Bounty(5%), Platform (10%)
-    uint256[3] public varTokenAllocation = [5,5,10];
+    // Token Allocation for Bounty(5%), Advisors (5%), Platform (10%)
+    uint256[3] public varTokenAllocation = [
+        5,
+        5,
+        10
+    ];
     // 20% vested over 4 segments for Core Team
-    uint256[4] public teamTokenAllocation = [5,5,5,5];
+    uint256[4] public teamTokenAllocation = [
+        5,
+        5,
+        5,
+        5
+    ];
     // 60% crowdsale
-    uint256 public constant crowdsaleAllocation = 60;
+    uint256 public constant CROWDSALE_ALLOCATION = 60;
 
     // Vested amounts of tokens, filled with proper values when finalizing
-    uint256[4] public vestedTeam = [0,0,0,0];
+    uint256[4] public vestedTeam = [
+        0,
+        0,
+        0,
+        0
+    ];
     uint256 public vestedAdvisors = 0;
 
     // Multisig - Withdraw / Platform / Bounty / Advisor
@@ -68,7 +95,7 @@ contract THTokenSale is Pausable {
     event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
     event Whitelisted(address indexed beneficiary, uint256 value);
     event SoftCapReached();
-    event Finalized();
+    event Finalized(bool crowdsaleFunded);
     event StageOpened(uint stage);
     event StageClosed(uint stage);
 
@@ -77,7 +104,7 @@ contract THTokenSale is Pausable {
     */
     modifier onlyAfterSale() {
         // Not calling hasEnded due to lower gas usage
-        require(now >= endTime || fundsRaised >= hardCap);
+        require(now >= endTime || fundsRaised >= HARD_CAP);
         _;
     }
 
@@ -86,7 +113,7 @@ contract THTokenSale is Pausable {
     */
     modifier beforeSaleEnds() {
         // Not calling hasEnded due to lower gas usage
-        require(now < endTime && fundsRaised < hardCap);
+        require(now < endTime && fundsRaised < HARD_CAP);
         _;
     }
 
@@ -106,6 +133,13 @@ contract THTokenSale is Pausable {
     }
 
     /*
+     * @dev fallback for processing ether
+     */
+    function() public payable {
+        buyTokens(msg.sender);
+    }
+
+    /*
      * @dev Sale is executed in stages/tranches. Each stage except the first is activated manually by the owner.
      * Only allow next stage when current stage/tranche is filled to cap.
      */
@@ -116,13 +150,6 @@ contract THTokenSale is Pausable {
 
         activeStage = stageIndex + 1;
         StageOpened(activeStage + 1);
-    }
-
-    /*
-     * @dev fallback for processing ether
-     */
-    function() public payable {
-        return buyTokens(msg.sender);
     }
 
     /*
@@ -139,9 +166,11 @@ contract THTokenSale is Pausable {
         require(validPurchase());
         require(canContribute(contributor, weiAmount));
 
-        if(_activeStageCap.sub(fundsRaised) < weiAmount) {
-            // Not enough tokens available for full contribution, we will do partial.
-            weiAmount = _activeStageCap.sub(fundsRaised);
+        uint256 capDelta = _activeStageCap.sub(fundsRaised);
+
+        if (capDelta < weiAmount) {
+            // Not enough tokens available for full contribution, we will do a partial.
+            weiAmount = capDelta;
             // Calculate refund for contributor.
             refund = msg.value.sub(weiAmount);
         }
@@ -163,12 +192,6 @@ contract THTokenSale is Pausable {
         if (fundsRaised >= _activeStageCap) {
             StageClosed(_stageIndex + 1);
         }
-    }
-
-    function validPurchase() internal view returns (bool) {
-        bool withinPeriod = now >= startTime && now <= endTime;
-        bool withinPurchaseLimits = msg.value >= minInvestment && msg.value <= maxInvestment;
-        return withinPeriod && withinPurchaseLimits;
     }
 
     function canContribute(address contributor, uint256 weiAmount) public view returns (bool) {
@@ -242,7 +265,7 @@ contract THTokenSale is Pausable {
 
     /*
      * @dev Leave token balance as is.
-     * The tokens are unusable if a refund call could be successful due to transferAllowed = false upon failing to reach softCap.
+     * The tokens are unusable if a refund call could be successful due to transferAllowed = false upon failing to reach SOFT_CAP.
      */
     function refund() onlyAfterSale public {
         require(refundAllowed);
@@ -263,7 +286,7 @@ contract THTokenSale is Pausable {
 
         // Crowdsale successful
         if (softCapReached()) {
-            uint256 _crowdsaleAllocation = crowdsaleAllocation; // 60% crowdsale
+            uint256 _crowdsaleAllocation = CROWDSALE_ALLOCATION; // 60% crowdsale
             uint256 crowdsaleTokens = token.totalSupply();
 
             uint256 tokensBounty = crowdsaleTokens.mul(varTokenAllocation[0]).div(_crowdsaleAllocation); // 5% Bounty
@@ -276,7 +299,7 @@ contract THTokenSale is Pausable {
             uint256 tokensTeam = 0;
             uint len = teamTokenAllocation.length;
             uint amount = 0;
-            for(uint i = 0; i < len; i++) {
+            for (uint i = 0; i < len; i++) {
                 amount = crowdsaleTokens.mul(teamTokenAllocation[i]).div(_crowdsaleAllocation);
                 vestedTeam[i] = amount;
                 tokensTeam = tokensTeam.add(amount);
@@ -289,24 +312,24 @@ contract THTokenSale is Pausable {
             token.mint(this, tokensTeam);
 
             token.endMinting(true);
+            Finalized(true);
             return true;
         } else {
             refundAllowed = true;
             token.endMinting(false);
+            Finalized(false);
             return false;
         }
-
-        Finalized();
     }
 
     function softCapReached() public view returns (bool) {
-        return fundsRaised >= softCap;
+        return fundsRaised >= SOFT_CAP;
     }
 
     /* Convenience methods / Testing interface */
 
     function hardCapReached() public view returns (bool) {
-        return fundsRaised >= hardCap;
+        return fundsRaised >= HARD_CAP;
     }
 
     // @return user balance
@@ -319,6 +342,17 @@ contract THTokenSale is Pausable {
     }
 
     function hasEnded() public view returns (bool) {
-        return now >= endTime || fundsRaised >= hardCap;
+        return now >= endTime || fundsRaised >= HARD_CAP;
+    }
+
+    function validPurchase() internal view returns (bool) {
+        //        // Min. investment size in presale phase 1 is 5 ethers
+        //        // TODO: Enable & add to Test suite
+        //        if(now <= (startTime + 3 * 86400) && msg.value < 5 ether) {
+        //            return false;
+        //        }
+        bool withinPeriod = now >= startTime && now <= endTime;
+        bool withinPurchaseLimits = msg.value >= MIN_INVESTMENT && msg.value <= MAX_INVESTMENT;
+        return withinPeriod && withinPurchaseLimits;
     }
 }
