@@ -82,6 +82,11 @@ node scripts/gen-abi.js
 
 ## About Tradershub.io
 
+## Testnet deployments
+
+THTokenSale@Kovan: https://kovan.etherscan.io/address/0xb1ef5f5c94e88eea50fdad8e40d5607cb38c73c6#readContract
+THToken:@Kovan: https://kovan.etherscan.io/address/0x3d5028fb77d77a4377ddf870beb11dcdf845e73b#readContract
+
 More information about us can be found at our:
 
 * [Website](https://tradershub.io)
