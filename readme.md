@@ -16,9 +16,9 @@ The token offering lasts up to 32 days starting February 22nd and finishing at t
 
 The token offering uses a whitelist system to assure only KYC approved contributors can purchase THT.    
 
-The token presale starts with Stage 1 active on **February 22nd** and is open for up to 48 hours to whitelist Group 1 members who can purchase up to Stage 1 cap worth of THT. 
+The token presale starts with Stage 1 active on **February 22nd** and is open for up to 48 hours to whitelisted members who can purchase up to Stage 1 cap worth of THT. 
 
-Then follows a ~48 hour technical break after which the presale continues on **February 26th** until **March 2nd** allowing Group 1 and 2 whitelisted members to participate. Stages 1 and 2 can be filled during this phase.
+Then follows a ~48 hour technical break after which the presale continues on **February 26th** until **March 2nd** allowing whitelisted members to participate. Stages 1 and 2 can be filled during this phase.
   
 On **March 3rd** at the latest the Presale phase concludes.
   
@@ -64,6 +64,21 @@ Run test using truffle
 truffle test
 ```
 
+## Etherscan / Swarm source
+
+### Flattener
+
+Run on *nix or use Vagrant on win.
+
+```
+./flatten.sh
+```
+
+### ABI generator
+
+```
+node scripts/gen-abi.js
+```
 
 ## About Tradershub.io
 
