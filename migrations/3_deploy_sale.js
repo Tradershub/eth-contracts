@@ -14,7 +14,9 @@ module.exports = function(deployer, network, accounts) {
             THTokenSale,
             config.CROWDSALE_START_TIME,
             config.MULTISIG_WALLET_TRADERSHUB_ADDRESS,
-            config.MULTISIG_WALLET_TEAM_ADDRESS
+            config.MULTISIG_WALLET_TEAM_ADDRESS,
+            config.WALLET_PLATFORM,
+            config.WALLET_BOUNTY_AND_ADVISORS
         ).then(() => {
             console.log("-- Crowdsale: " + THTokenSale.address + "\n");
         });

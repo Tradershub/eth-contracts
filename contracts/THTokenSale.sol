@@ -21,6 +21,10 @@ contract THTokenSale is Pausable {
     // Maximum possible cap in ethers
     uint256 public constant HARD_CAP = 12000 ether;
 
+    bool public softCapReached = false;
+    bool public hardCapReached = false;
+    bool public saleSuccessfullyFinished = false;
+
     /**
      * Stage 1: 3000 ether worth of THT available at 40% bonus
      * Stage 2: 1800 ether worth of THT available at 20% bonus
@@ -44,43 +48,32 @@ contract THTokenSale is Pausable {
     ];
     uint256 public activeStage = 0;
 
-    // Minimum and maximum investments in Ether
-    // uint256 public constant minInvestmentPeriod1 = 5 ether; // TODO - decide if implementing
-    uint256 public constant MIN_INVESTMENT = 0.1 ether; //
-    uint256 public constant MAX_INVESTMENT = 3000 ether; // TODO - set value at time of deployment
+    // Minimum investment during first 48 hours
+    uint256 public constant MIN_INVESTMENT_PHASE1 = 5 ether;
+    // Minimum investment
+    uint256 public constant MIN_INVESTMENT = 0.1 ether;
 
     // refundAllowed can be set to true if SOFT_CAP is not reached
     bool public refundAllowed = false;
     // Token Allocation for Bounty(5%), Advisors (5%), Platform (10%)
-    uint256[3] public varTokenAllocation = [
-        5,
-        5,
-        10
-    ];
+    uint256[3] public varTokenAllocation = [5, 5, 10];
     // 20% vested over 4 segments for Core Team
-    uint256[4] public teamTokenAllocation = [
-        5,
-        5,
-        5,
-        5
-    ];
+    uint256[4] public teamTokenAllocation = [5, 5, 5, 5];
     // 60% crowdsale
     uint256 public constant CROWDSALE_ALLOCATION = 60;
 
     // Vested amounts of tokens, filled with proper values when finalizing
-    uint256[4] public vestedTeam = [
-        0,
-        0,
-        0,
-        0
-    ];
+    uint256[4] public vestedTeam = [0, 0, 0, 0];
     uint256 public vestedAdvisors = 0;
 
-    // Multisig - Withdraw / Platform / Bounty / Advisor
+    // Withdraw
     address public wallet;
-
-    // Multisig - CoreTeam Vested
+    // CoreTeam Vested
     address public walletCoreTeam;
+    // Platform THT
+    address public walletPlatform;
+    // Bounty and Advisors THT
+    address public walletBountyAndAdvisors;
 
     // start and end timestamp when investments are allowed (both inclusive)
     uint256 public startTime;
@@ -95,18 +88,10 @@ contract THTokenSale is Pausable {
     event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
     event Whitelisted(address indexed beneficiary, uint256 value);
     event SoftCapReached();
-    event Finalized(bool crowdsaleFunded);
+    event HardCapReached();
+    event Finalized(bool successfullyFinished);
     event StageOpened(uint stage);
     event StageClosed(uint stage);
-
-    /**
-    * @dev Modifier to make a function callable only when the sale has ended
-    */
-    modifier onlyAfterSale() {
-        // Not calling hasEnded due to lower gas usage
-        require(now >= endTime || fundsRaised >= HARD_CAP);
-        _;
-    }
 
     /**
     * @dev Modifier to make a function callable only during the sale
@@ -117,16 +102,26 @@ contract THTokenSale is Pausable {
         _;
     }
 
-    function THTokenSale(uint256 _startTime, address _wallet, address _walletCoreTeam) public {
+    function THTokenSale(
+        uint256 _startTime,
+        address _wallet,
+        address _walletCoreTeam,
+        address _walletPlatform,
+        address _walletBountyAndAdvisors
+    ) public {
         require(_startTime >= now);
         require(_wallet != 0x0);
         require(_walletCoreTeam != 0x0);
+        require(_walletPlatform != 0x0);
+        require(_walletBountyAndAdvisors != 0x0);
         require(vestedTeam.length == teamTokenAllocation.length);   // sanity checks
         require(stageCaps.length == stageTokenMul.length);   // sanity checks
 
         token = new THToken();
         wallet = _wallet;
         walletCoreTeam = _walletCoreTeam;
+        walletPlatform = _walletPlatform;
+        walletBountyAndAdvisors = _walletBountyAndAdvisors;
         startTime = _startTime;
         // Sale lasts up to 4 weeks and 4 days
         endTime = _startTime + 32 * 86400;
@@ -190,7 +185,7 @@ contract THTokenSale is Pausable {
         TokenPurchase(0x0, contributor, weiAmount, tokensToMint);
 
         if (fundsRaised >= _activeStageCap) {
-            StageClosed(_stageIndex + 1);
+            finalizeCurrentStage();
         }
     }
 
@@ -203,9 +198,9 @@ contract THTokenSale is Pausable {
     function addWhitelist(address contributor, uint256 weiAmount) onlyOwner public returns (bool) {
         require(contributor != 0x0);
         require(weiAmount > 0);
-        Whitelisted(contributor, weiAmount);
         // Only ever set the new amount, even if user is already whitelisted with a previous value set
         whitelist[contributor] = weiAmount;
+        Whitelisted(contributor, weiAmount);
         return true;
     }
 
@@ -227,14 +222,14 @@ contract THTokenSale is Pausable {
     }
 
     function withdraw() onlyOwner public {
-        require(softCapReached());
+        require(softCapReached);
         require(this.balance > 0);
 
         wallet.transfer(this.balance);
     }
 
-    function withdrawCoreTeamTokens() onlyOwner onlyAfterSale public {
-        require(softCapReached());
+    function withdrawCoreTeamTokens() onlyOwner public {
+        require(saleSuccessfullyFinished);
 
         if (now > startTime + 720 days && vestedTeam[3] > 0) {
             token.transfer(walletCoreTeam, vestedTeam[3]);
@@ -254,11 +249,11 @@ contract THTokenSale is Pausable {
         }
     }
 
-    function withdrawAdvisorTokens() onlyOwner onlyAfterSale public {
-        require(softCapReached());
+    function withdrawAdvisorTokens() onlyOwner public {
+        require(saleSuccessfullyFinished);
 
         if (now > startTime + 180 days && vestedAdvisors > 0) {
-            token.transfer(wallet, vestedAdvisors);
+            token.transfer(walletBountyAndAdvisors, vestedAdvisors);
             vestedAdvisors = 0;
         }
     }
@@ -267,11 +262,10 @@ contract THTokenSale is Pausable {
      * @dev Leave token balance as is.
      * The tokens are unusable if a refund call could be successful due to transferAllowed = false upon failing to reach SOFT_CAP.
      */
-    function refund() onlyAfterSale public {
+    function refund() public {
         require(refundAllowed);
-        require(!softCapReached());
+        require(!softCapReached);
         require(weiBalances[msg.sender] > 0);
-        require(token.balanceOf(msg.sender) > 0);
 
         uint256 currentBalance = weiBalances[msg.sender];
         weiBalances[msg.sender] = 0;
@@ -281,11 +275,12 @@ contract THTokenSale is Pausable {
     /*
      * @dev When finishing the crowdsale we mint non-crowdsale tokens based on total tokens minted during crowdsale
      */
-    function finishCrowdsale() onlyOwner onlyAfterSale public returns (bool) {
-        require(!token.mintingFinished());
+    function finishCrowdsale() onlyOwner public returns (bool) {
+        require(now >= endTime || fundsRaised >= HARD_CAP);
+        require(!saleSuccessfullyFinished && !refundAllowed);
 
         // Crowdsale successful
-        if (softCapReached()) {
+        if (softCapReached) {
             uint256 _crowdsaleAllocation = CROWDSALE_ALLOCATION; // 60% crowdsale
             uint256 crowdsaleTokens = token.totalSupply();
 
@@ -305,31 +300,23 @@ contract THTokenSale is Pausable {
                 tokensTeam = tokensTeam.add(amount);
             }
 
-            token.mint(wallet, tokensBounty);
-            token.mint(wallet, tokensPlatform);
+            token.mint(walletBountyAndAdvisors, tokensBounty);
+            token.mint(walletPlatform, tokensPlatform);
 
             token.mint(this, tokensAdvisors);
             token.mint(this, tokensTeam);
 
             token.endMinting(true);
+            saleSuccessfullyFinished = true;
             Finalized(true);
             return true;
         } else {
             refundAllowed = true;
+            // Token contract gets destroyed
             token.endMinting(false);
             Finalized(false);
             return false;
         }
-    }
-
-    function softCapReached() public view returns (bool) {
-        return fundsRaised >= SOFT_CAP;
-    }
-
-    /* Convenience methods / Testing interface */
-
-    function hardCapReached() public view returns (bool) {
-        return fundsRaised >= HARD_CAP;
     }
 
     // @return user balance
@@ -346,13 +333,26 @@ contract THTokenSale is Pausable {
     }
 
     function validPurchase() internal view returns (bool) {
-        //        // Min. investment size in presale phase 1 is 5 ethers
-        //        // TODO: Enable & add to Test suite
-        //        if(now <= (startTime + 3 * 86400) && msg.value < 5 ether) {
-        //            return false;
-        //        }
+        // Extended from 2 * 86400 to 200.000 seconds, since there's a 48 hour pause scheduled after phase 1
+        if(now <= (startTime + 200000) && msg.value < MIN_INVESTMENT_PHASE1) {
+            return false;
+        }
         bool withinPeriod = now >= startTime && now <= endTime;
-        bool withinPurchaseLimits = msg.value >= MIN_INVESTMENT && msg.value <= MAX_INVESTMENT;
+        bool withinPurchaseLimits = msg.value >= MIN_INVESTMENT;
         return withinPeriod && withinPurchaseLimits;
+    }
+
+    function finalizeCurrentStage() internal {
+        uint256 _stageIndex = activeStage;
+
+        if (_stageIndex == 0) {
+            softCapReached = true;
+            SoftCapReached();
+        } else if (_stageIndex == stageCaps.length - 1) {
+            hardCapReached = true;
+            HardCapReached();
+        }
+
+        StageClosed(_stageIndex + 1);
     }
 }

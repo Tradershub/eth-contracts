@@ -26,11 +26,12 @@ contract THToken is MintableToken {
         return super.transfer(to, value);
     }
 
-    function mint(address contributor, uint256 amount) public returns (bool) {
-        return super.mint(contributor, amount);
-    }
-
-    function endMinting(bool _transferAllowed) public returns (bool) {
+    function endMinting(bool _transferAllowed) onlyOwner canMint public returns (bool) {
+        if (!_transferAllowed) {
+            // Only ever called if the sale failed to reach soft cap
+            selfdestruct(msg.sender);
+            return true;
+        }
         transferAllowed = _transferAllowed;
         TransferAllowed(_transferAllowed);
         return super.finishMinting();
